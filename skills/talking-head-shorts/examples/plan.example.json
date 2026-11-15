@@ -1,0 +1,98 @@
+{
+ "hook": {
+  "user": "@nome.utente",
+  "text": "Perché Claude mi monta male i video?",
+  "end": 5.0
+ },
+ "title": {
+  "text": "Come fa Claude a tagliare le pause",
+  "end": 2.6
+ },
+ "panels": [
+  {
+   "type": "terminal",
+   "start": 2.7,
+   "end": 6.5,
+   "y": 320,
+   "lines": [
+    "* Update Todos",
+    "[ ] Pulisci l'audio (API Auphonic)",
+    "[ ] Silence detection (FFmpeg)",
+    "> taglia le pause"
+   ]
+  },
+  {
+   "type": "waveform",
+   "start": 6.5,
+   "end": 11,
+   "title": "audio.wav",
+   "badge": "-14 dB",
+   "audio_from": 6.5,
+   "audio_to": 11,
+   "playhead": 0.35
+  },
+  {
+   "type": "terminal",
+   "start": 11,
+   "end": 16,
+   "y": 150,
+   "lines": [
+    "* Update Todos",
+    "[x] Pulisci l'audio (API Auphonic)",
+    "[ ] Silence detection (FFmpeg)"
+   ]
+  },
+  {
+   "type": "waveform",
+   "start": 11,
+   "end": 16,
+   "y": 470,
+   "title": "Auphonic",
+   "icon": [
+    230,
+    60,
+    50
+   ],
+   "badge": "pulito",
+   "badge_color": [
+    60,
+    190,
+    90
+   ],
+   "audio_from": 11,
+   "audio_to": 16,
+   "regions": [
+    {
+     "from": 0.15,
+     "to": 0.25,
+     "label": "silenzio"
+    }
+   ]
+  },
+  {
+   "type": "chip",
+   "text": "FFmpeg: programma gratis per audio e video",
+   "start": 17,
+   "end": 21,
+   "y": 720
+  }
+ ],
+ "split": [
+  [
+   11,
+   16
+  ]
+ ],
+ "face": {
+  "x": 0.5,
+  "y": 0.4,
+  "size": 0.45
+ },
+ "captions": {
+  "max_words": 3,
+  "max_chars": 18,
+  "size": 66,
+  "y": 0.745,
+  "y_split": 0.555
+ }
+}
