@@ -25,7 +25,7 @@ Follow them unless the user asks otherwise.
 ## Workflow (2 passate)
 
 ```bash
-S=skills/talking-head-shorts/scripts
+S=.claude/skills/talking-head-shorts/scripts
 # 1) taglio + reframe + trascrizione (whisper se disponibile)
 python3 $S/edit.py cut raw.mp4 --work work --lang it
 #    -> work/cut.mp4, work/segments.json, work/words.json, work/transcript.txt (tempi già DOPO il taglio)
