@@ -19,6 +19,9 @@ Follow them unless the user asks otherwise.
 | Hook (0-5 s) | Bolla "risposta al commento" in alto (avatar + @utente + domanda), più una card terminale scura con il titolo in MAIUSCOLO mono, il `>` arancione e il cursore a blocco |
 | Pannelli | Card UI che entrano dall'alto (fade + slide di 36 px in 160 ms) nella fascia 140-800 px: terminale "Update Todos" con i task che si spuntano man mano, waveform dell'audio **vero**, etichette "silenzio", chip blu esplicativi. **Ogni concetto nominato a voce ha la sua grafica** |
 | Layout split | Quando spiega uno strumento: sfondo beige `#EEEBE6`, pannelli sopra, sottotitolo scuro al 55,5%, faccia in un cerchio Ø380 con bordo bianco al 69% |
+| Layout stack | Per gli **elenchi di strumenti/app** ("c'ho Grok, Claude Max, Vercel…"): faccia in alto in una finestra macOS con "● LIVE" (y 186-750), sotto uno sfondo blu notte sfumato. Lo strumento nominato appare **grande al centro** come icona app (290 px al 56%) **sulla parola esatta**; quando arriva il successivo, il precedente passa nel **dock** a capsula (al 43%), che si riempie man mano. Sottotitolo bianco più grande al 68% |
+| Layout pip | Quando mostra un sito o un'app: finestra con lo screenshot o la registrazione schermo in alto (titolo = dominio, es. `grok.com`), dock con tutte le icone già nominate, faccia in una finestrella "LIVE" più piccola sotto, sottotitolo al 70% |
+| Sottotitoli | Entrano con una dissolvenza rapida (80 ms) + "pop" |
 | Audio | Loudnorm a -14 LUFS, true peak -1 dB (standard dei social) |
 | Ritmo | Un cambio visivo (pannello nuovo, task spuntato, zoom, cambio layout) ogni 2-4 s |
 
@@ -47,6 +50,7 @@ Leggi `transcript.txt`. I timestamp sono già nel tempo del video tagliato. Poi:
 3. Tieni un terminale "Update Todos" che evolve: i task sono `[ ]` all'inizio e diventano `[x]` (barrati) quando vengono spiegati. Ogni stato è un pannello con start/end consecutivi.
 4. Per le waveform usa `audio_from`/`audio_to` uguali alla finestra del pannello, così le barre si muovono con la voce reale. Con `regions` evidenzi i silenzi, con `bottom_labels` le sillabe (es. DO / PP / IA).
 5. Le sezioni "spiegone" (un tool, un concetto tecnico) vanno in `split`. Le parti emotive, l'hook e la CTA restano full-screen sulla faccia.
+5b. Quando elenca strumenti, servizi o app, usa un layout `stack` per tutta la durata dell'elenco e aggiungi un elemento `icons` per ciascuno, con `at` = inizio della parola che lo nomina. Se poi mostra un sito, passa a `pip` con `screen` (screenshot o clip): il dock resta visibile con tutte le icone.
 6. Gli ultimi 2-3 s restano senza pannelli (CTA a voce).
 
 Schema completo in `examples/plan.example.json`. Tipi di pannello:
@@ -56,6 +60,13 @@ Schema completo in `examples/plan.example.json`. Tipi di pannello:
 - `waveform {title, badge?, badge_color?, icon?, audio_from, audio_to, regions?, playhead?, bottom_labels?, height?}`
 - `chip {text, dark?}`
 - `image {path, width?}`: screenshot o loghi reali
+
+Layout (in `layouts`, oppure `split: [[a,b]]` come scorciatoia):
+- `{"type":"split","start","end","face"?}`
+- `{"type":"stack","start","end","face":{"x","y","w"}?,"title"?}`: `face` è il ritaglio della faccia in frazioni del frame (default x 0.5, y 0.45, w 0.80)
+- `{"type":"pip","start","end","screen":"shot.png|clip.mp4","screen_title":"grok.com","face"?}`
+
+Icone (in `icons`): `{"at": 4.4, "image": "logos/claude.png"}` con il logo vero (PNG; `scale` = quanto spazio occupa, `full_bleed` se il PNG è già un'icona completa), oppure come fallback `{"at", "label", "short": "✳", "bg": [r,g,b], "fg": [r,g,b]}`. Se l'utente non fornisce i loghi, chiedili o usa il fallback e diglielo.
 
 Campi comuni: `start`, `end`, `y` (px dall'alto, default 140), `x` (espressione ffmpeg, default centrato), `anim` (`pop` | `none`).
 Più pannelli nello stesso intervallo vanno impilati a mano con `y` (circa 230 px per un terminale di 4 righe, 250 per una waveform).

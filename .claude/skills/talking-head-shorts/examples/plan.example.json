@@ -94,5 +94,59 @@
   "size": 66,
   "y": 0.745,
   "y_split": 0.555
- }
+ },
+ "layouts": [
+  {
+   "type": "stack",
+   "start": 22,
+   "end": 32,
+   "face": {
+    "x": 0.5,
+    "y": 0.45,
+    "w": 0.8
+   }
+  },
+  {
+   "type": "pip",
+   "start": 32,
+   "end": 36,
+   "screen": "screens/grok.png",
+   "screen_title": "grok.com"
+  }
+ ],
+ "icons": [
+  {
+   "at": 22.1,
+   "image": "logos/grok.png"
+  },
+  {
+   "at": 24.0,
+   "image": "logos/claude.png"
+  },
+  {
+   "at": 26.5,
+   "label": "Vercel",
+   "short": "▲",
+   "bg": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "at": 28.3,
+   "label": "Supabase",
+   "short": "S",
+   "bg": [
+    28,
+    28,
+    30
+   ],
+   "fg": [
+    62,
+    207,
+    142
+   ]
+  }
+ ]
 }

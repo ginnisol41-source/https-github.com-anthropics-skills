@@ -269,3 +269,86 @@ def circle_ring(size: int, ring: int = 6) -> Image.Image:
     img = Image.new("RGBA", (size * SS, size * SS), (0, 0, 0, 0))
     ImageDraw.Draw(img).ellipse((0, 0, size * SS - 1, size * SS - 1), outline=(255, 255, 255, 255), width=ring * SS)
     return img.resize((size, size), Image.LANCZOS)
+
+
+# --------------------------------------------------------------------------- "stack" / "pip" layouts
+
+def window_bar(width: int, title: str = "LIVE", live: bool = True, height: int = 44) -> Image.Image:
+    """macOS-style title bar placed above a live face feed or a screen capture."""
+    w, h = width * SS, height * SS
+    img = Image.new("RGBA", (w, h), (34, 34, 38, 255))
+    d = ImageDraw.Draw(img)
+    for i, c in enumerate([(255, 95, 87), (254, 188, 46), (40, 200, 64)]):
+        cx = (22 + i * 22) * SS
+        d.ellipse((cx - 7 * SS, h // 2 - 7 * SS, cx + 7 * SS, h // 2 + 7 * SS), fill=c)
+    f = F(SANS_SB, 22)
+    tw = d.textlength(title, font=f)
+    x = (w - tw) / 2
+    if live:
+        d.ellipse((x - 22 * SS, h / 2 - 6 * SS, x - 10 * SS, h / 2 + 6 * SS), fill=(240, 50, 60))
+    d.text((x, h / 2), title, font=f, fill=(235, 235, 235), anchor="lm")
+    return img.resize((width, height), Image.LANCZOS)
+
+
+def dark_background(w: int = 1080, h: int = 1920) -> Image.Image:
+    """Deep navy gradient with a soft glow behind the centre (where the big icon sits)."""
+    y = np.linspace(0, 1, h)[:, None]
+    x = np.linspace(-1, 1, w)[None, :]
+    top, bot = np.array([16, 20, 32]), np.array([8, 10, 16])
+    base = top[None, None, :] * (1 - y[..., None]) + bot[None, None, :] * y[..., None]
+    glow = np.exp(-((x ** 2) / 0.5 + ((y - 0.55) ** 2) / 0.05))[..., None] * np.array([22, 28, 48])
+    arr = np.clip(base + glow, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, "RGB").convert("RGBA")
+
+
+def app_icon(spec: dict, size: int = 290) -> Image.Image:
+    """Rounded-square app icon. spec: {"image": path} for the real logo, or {"label": "Grok", "bg": [r,g,b], "fg": [r,g,b]}."""
+    s = size * SS
+    r = int(s * 0.23)
+    bg = tuple(spec.get("bg", (22, 22, 24)))
+    img = Image.new("RGBA", (s, s), bg + (255,))
+    if spec.get("image"):
+        logo = Image.open(spec["image"]).convert("RGBA")
+        if spec.get("full_bleed"):
+            logo = logo.resize((s, s), Image.LANCZOS)
+            img.alpha_composite(logo)
+        else:
+            inner = int(s * spec.get("scale", 0.62))
+            logo.thumbnail((inner, inner), Image.LANCZOS)
+            img.alpha_composite(logo, ((s - logo.width) // 2, (s - logo.height) // 2))
+    else:
+        label = spec.get("short") or spec.get("label", "?")[:1].upper()
+        d = ImageDraw.Draw(img)
+        fs = int(size * (0.5 if len(label) <= 2 else 0.26))
+        fnt = F("DejaVu Sans:bold", fs) if any(ord(ch) > 0x2000 for ch in label) else F(SANS_B, fs)
+        d.text((s / 2, s / 2), label, font=fnt, fill=tuple(spec.get("fg", (255, 255, 255))), anchor="mm")
+    mask = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, s - 1, s - 1), r, fill=255)
+    img.putalpha(mask)
+    # subtle border like iOS icons on dark backgrounds
+    ImageDraw.Draw(img).rounded_rectangle((0, 0, s - 1, s - 1), r, outline=(255, 255, 255, 40), width=2 * SS)
+    pad = 30 * SS
+    out = Image.new("RGBA", (s + 2 * pad, s + 2 * pad), (0, 0, 0, 0))
+    sh = Image.new("RGBA", out.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sh).rounded_rectangle((pad, pad + 10 * SS, pad + s, pad + s + 10 * SS), r, fill=(0, 0, 0, 150))
+    out = Image.alpha_composite(out, sh.filter(ImageFilter.GaussianBlur(14 * SS)))
+    out.alpha_composite(img, (pad, pad))
+    return out.resize((out.width // SS, out.height // SS), Image.LANCZOS)
+
+
+def icon_tray(specs: list[dict], icon: int = 96, gap: int = 14) -> Image.Image:
+    """Dock-like pill that collects the icons already mentioned."""
+    n = len(specs)
+    pad = 14
+    w = n * icon + (n - 1) * gap + 2 * pad
+    h = icon + 2 * pad
+    img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((0, 0, w * SS - 1, h * SS - 1), 20 * SS, fill=(40, 42, 50, 235), outline=(255, 255, 255, 60), width=2 * SS)
+    img = img.resize((w, h), Image.LANCZOS)
+    for i, sp in enumerate(specs):
+        ic = app_icon(sp, icon)
+        p = (ic.width - icon) // 2
+        ic = ic.crop((p, p, p + icon, p + icon))
+        img.alpha_composite(ic, (pad + i * (icon + gap), pad))
+    return img

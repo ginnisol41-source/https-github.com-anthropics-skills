@@ -34,6 +34,17 @@ La skill `talking-head-shorts` (oggi in `.claude/skills/talking-head-shorts/`):
 - È stato creato `CLAUDE.md` con le regole dello stile e l'istruzione di usarle sempre per il montaggio video, rispondendo in italiano.
 - Nota: tutto è nel branch `claude/video-editing-like-him-4wtpmw`. Perché le nuove sessioni lo trovino, va unito al branch principale (pull request da aprire su richiesta).
 
-## 5. Prossimi passi
+## 5. Secondo video di riferimento ("usali anche tu")
+L'utente manda una registrazione dello schermo (11 s) di un altro TikTok dello stesso creator. L'hook è *@ale_stackbuilder.24: "Che piani di AI usi?"* e il video elenca Grok, 2× Claude Max, Vercel, Supabase, Lovable e GitHub.
+Nuove tecniche individuate e aggiunte alla skill:
+- **Layout stack**: faccia in alto in una finestra macOS "● LIVE", sfondo blu notte; icona app grande al centro sulla parola che la nomina; le icone precedenti finiscono in un **dock** a capsula che si riempie.
+- **Layout pip**: screenshot del sito (grok.com) in una finestra in alto, dock, faccia in una finestrella "LIVE" più piccola sotto.
+- Sottotitoli con dissolvenza rapida (~80 ms) e più grandi nei layout scuri.
+
+Implementazione: `layouts` (split/stack/pip) e `icons` nel plan; nuove card `window_bar`, `dark_background`, `app_icon`, `icon_tray`. Test: render con i tre layout insieme, completato.
+Limite: i loghi veri delle app non si possono scaricare dal container. Si usano icone di ripiego (simbolo + colore del brand) oppure PNG forniti dall'utente.
+
+## 6. Prossimi passi
+- Fornire i PNG dei loghi delle app usate (per il layout stack).
 - Mandare il **girato grezzo** (senza tagli) e la domanda o il commento da usare come hook. Facoltativo: un file `.srt`, se la trascrizione automatica non è disponibile.
 - Decidere se aprire la pull request verso il branch principale.

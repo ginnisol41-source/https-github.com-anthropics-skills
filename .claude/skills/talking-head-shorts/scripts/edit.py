@@ -280,11 +280,17 @@ def ass_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace("{", "(").replace("}", ")")
 
 
-def write_ass(path: Path, chunks: list[dict], split_ranges, style: dict) -> None:
+CAPTION_LAYOUT = {  # layout -> (style, y fraction, size multiplier)
+    "full": ("Cap", 0.745, 1.0),
+    "split": ("CapDark", 0.555, 1.0),
+    "stack": ("Cap", 0.680, 1.12),
+    "pip": ("Cap", 0.700, 1.12),
+}
+
+
+def write_ass(path: Path, chunks: list[dict], layouts: list[dict], style: dict) -> None:
     font = style.get("font", "Inter")
     size = style.get("size", 66)
-    y_norm = int(H * style.get("y", 0.745))
-    y_split = int(H * style.get("y_split", 0.555))
     hdr = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -301,12 +307,14 @@ Style: CapDark,{font},{size},&H001A1A1A,&H001A1A1A,&H00000000,&H00000000,-1,0,0,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     ev = []
-    pop = r"{\blur0.6\fscx86\fscy86\t(0,90,\fscx100\fscy100)}"
     for c in chunks:
         mid = (c["s"] + c["e"]) / 2
-        in_split = any(a <= mid < b for a, b in split_ranges)
-        st, y = ("CapDark", y_split) if in_split else ("Cap", y_norm)
-        ev.append(f"Dialogue: 0,{ass_time(c['s'])},{ass_time(c['e'])},{st},,0,0,0,,{{\\pos({W // 2},{y})}}{pop}{ass_escape(c['text'])}")
+        kind = next((L["type"] for L in layouts if L["start"] <= mid < L["end"]), "full")
+        st, yf, mult = CAPTION_LAYOUT[kind]
+        yf = style.get(f"y_{kind}", style.get("y", yf) if kind == "full" else yf)
+        fs = int(size * mult)
+        pop = rf"{{\fad(80,0)\blur0.6\fs{fs}\fscx86\fscy86\t(0,90,\fscx100\fscy100)}}"
+        ev.append(f"Dialogue: 0,{ass_time(c['s'])},{ass_time(c['e'])},{st},,0,0,0,,{{\\pos({W // 2},{int(H * yf)})}}{pop}{ass_escape(c['text'])}")
     path.write_text(hdr + "\n".join(ev) + "\n", encoding="utf-8")
 
 
@@ -339,6 +347,171 @@ def build_card(p: dict, cut_path: str, tmp: Path, idx: int) -> Path:
     return out
 
 
+class Graph:
+    """Small helper that accumulates ffmpeg inputs and filter_complex lines."""
+
+    def __init__(self, cut_path: str, total: float, tmp: Path):
+        self.inputs, self.n, self.fl, self.c, self.total, self.tmp = ["-i", cut_path], 1, [], 0, total, tmp
+
+    def label(self, p="x") -> str:
+        self.c += 1
+        return f"[{p}{self.c}]"
+
+    def still(self, png) -> str:
+        """Looped still image input, returned as an rgba stream label."""
+        self.inputs += ["-loop", "1", "-t", f"{self.total:.3f}", "-i", str(png)]
+        k, self.n = self.n, self.n + 1
+        out = self.label("s")
+        self.fl.append(f"[{k}:v]format=rgba{out}")
+        return out
+
+    def media(self, path: str, start: float, end: float, w: int, h: int) -> str:
+        """Image or video, cover-scaled to w x h, starting at `start` on the output timeline."""
+        if Path(path).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            chain = self.still(path)
+        else:
+            self.inputs += ["-i", str(path)]
+            k, self.n = self.n, self.n + 1
+            chain = f"[{k}:v]trim=0:{end - start:.3f},setpts=PTS-STARTPTS+{start:.3f}/TB,fps={FPS},"
+        out = self.label("m")
+        self.fl.append(f"{chain}scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,format=rgba{out}")
+        return out
+
+    def split_main(self, n_extra: int) -> list[str]:
+        outs = [self.label("v") for _ in range(n_extra + 1)]
+        self.fl.append(f"[0:v]split={len(outs)}{''.join(outs)}" if n_extra else f"[0:v]null{outs[0]}")
+        return outs
+
+    def overlay(self, base, top, x, y, s, e, anim="pop") -> str:
+        out = self.label("o")
+        if anim != "none":
+            faded = self.label("f")
+            self.fl.append(f"{top}fade=t=in:st={s:.3f}:d=0.12:alpha=1{faded}")
+            top = faded
+        yexpr = f"{y}-36*max(0\\,1-(t-{s:.3f})/0.16)" if anim == "pop" else str(y)
+        self.fl.append(f"{base}{top}overlay=x={x}:y='{yexpr}':enable='between(t,{s:.3f},{e:.3f})':eof_action=pass{out}")
+        return out
+
+    def bg(self, color_or_png) -> str:
+        if isinstance(color_or_png, Path):
+            return self.still(color_or_png)
+        out = self.label("bg")
+        self.fl.append(f"color=c={color_or_png}:s={W}x{H}:r={FPS}:d={self.total:.3f},format=rgba{out}")
+        return out
+
+    def place(self, base, top, x, y) -> str:
+        out = self.label("p")
+        self.fl.append(f"{base}{top}overlay={x}:{y}:shortest=1{out}")
+        return out
+
+
+def face_crop(g: Graph, feed: str, crop: dict, w: int, h: int, default_w: float) -> str:
+    """Cut a w x h window around the face out of the (already 1080x1920) main feed."""
+    cw = int(W * crop.get("w", default_w)) // 2 * 2
+    ch = int(cw * h / w) // 2 * 2
+    cx = int(min(max(0, W * crop.get("x", 0.5) - cw / 2), W - cw))
+    cy = int(min(max(0, H * crop.get("y", 0.45) - ch / 2), H - ch))
+    out = g.label("fc")
+    g.fl.append(f"{feed}crop={cw}:{ch}:{cx}:{cy},scale={w}:{h}:flags=lanczos,setsar=1,format=rgba{out}")
+    return out
+
+
+def window(g: Graph, base: str, content: str, x: int, y: int, w: int, title: str, live: bool) -> str:
+    bar = g.tmp / f"bar_{g.c}.png"
+    cards.window_bar(w, title, live).save(bar)
+    base = g.place(base, content, x, y + 44)
+    return g.place(base, g.still(bar), x, y)
+
+
+def dark_bg(g: Graph) -> str:
+    p = g.tmp / "darkbg.png"
+    if not p.exists():
+        cards.dark_background(W, H).save(p)
+    return g.bg(p)
+
+
+def layout_split(g: Graph, feed: str, L: dict, plan: dict) -> str:
+    """Beige background, circular face cam (panels go on top, captions turn dark)."""
+    face = {**plan.get("face", {}), **L.get("face", {})}
+    diam = L.get("circle_size", plan.get("circle_size", 380))
+    mask, ring = g.tmp / "mask.png", g.tmp / "ring.png"
+    cards.circle_mask(diam).save(mask)
+    cards.circle_ring(diam, 6).save(ring)
+    fc = face_crop(g, feed, {"x": face.get("x", 0.5), "y": face.get("y", 0.36), "w": face.get("size", 0.42)}, diam, diam, 0.42)
+    mk = g.label("mk")
+    g.fl.append(f"{g.still(mask)}format=gray{mk}")
+    circ = g.label("ci")
+    g.fl.append(f"{fc}{mk}alphamerge{circ}")
+    x, y = (W - diam) // 2, int(H * L.get("circle_y", plan.get("circle_y", 0.69))) - diam // 2
+    b = g.place(g.bg(BEIGE), circ, x, y)
+    return g.place(b, g.still(ring), x, y)
+
+
+def layout_stack(g: Graph, feed: str, L: dict, plan: dict) -> str:
+    """Face cam in a 'LIVE' window across the top, dark navy below (big app icons + big captions)."""
+    crop = {**plan.get("face", {}), **L.get("face", {})}
+    fc = face_crop(g, feed, crop, W, 520, 0.80)
+    return window(g, dark_bg(g), fc, 0, 186, W, L.get("title", "LIVE"), live=True)
+
+
+def layout_pip(g: Graph, feed: str, L: dict, plan: dict) -> str:
+    """Screen capture window on top, small 'LIVE' face window below."""
+    b = dark_bg(g)
+    sw, sh = 940, 400
+    if L.get("screen"):
+        scr = g.media(L["screen"], L["start"], L["end"], sw, sh)
+        b = window(g, b, scr, (W - sw) // 2, 330, sw, L.get("screen_title", ""), live=False)
+    crop = {**plan.get("face", {}), **L.get("face", {})}
+    fw, fh = 700, 440
+    fc = face_crop(g, feed, crop, fw, fh, 0.62)
+    return window(g, b, fc, (W - fw) // 2, 930, fw, "LIVE", live=True)
+
+
+def icons_and_tray(g: Graph, base: str, plan: dict, layouts: list[dict]) -> str:
+    """Big centred icon for the tool being named (stack layout) + a dock that collects the previous ones."""
+    icons = sorted(plan.get("icons", []), key=lambda i: i["at"])
+    if not icons:
+        return base
+    stacks = [L for L in layouts if L["type"] in ("stack", "pip")]
+
+    def layout_at(t):
+        return next((L for L in stacks if L["start"] <= t < L["end"]), None)
+
+    big = 290
+    for i, ic in enumerate(icons):
+        L = layout_at(ic["at"])
+        if not L or L["type"] != "stack":
+            continue
+        e = min(L["end"], icons[i + 1]["at"]) if i + 1 < len(icons) else L["end"]
+        png = g.tmp / f"icon_{i}.png"
+        cards.app_icon(ic, big).save(png)
+        im_h = cards.app_icon(ic, big).height
+        base = g.overlay(base, g.still(png), "(W-w)/2", int(H * 0.56) - im_h // 2, ic["at"], e, anim="pop")
+    # tray: evaluate content on every breakpoint interval
+    bps = sorted({0.0, g.total, *[i["at"] for i in icons], *[L["start"] for L in stacks], *[L["end"] for L in stacks]})
+    states = []
+    for a, b in zip(bps, bps[1:]):
+        L = layout_at((a + b) / 2)
+        if not L:
+            continue
+        upto = [ic for ic in icons if ic["at"] <= a + 1e-6]
+        if L["type"] == "stack" and upto and layout_at(upto[-1]["at"]) is L:
+            upto = upto[:-1]  # the current one is shown big
+        if not upto:
+            continue
+        key = (L["type"], len(upto))
+        if states and states[-1][0] == key and abs(states[-1][2] - a) < 1e-6:
+            states[-1][2] = b
+        else:
+            states.append([key, a, b])
+    for (kind, n), a, b in states:
+        png = g.tmp / f"tray_{kind}_{n}_{a:.2f}.png"
+        cards.icon_tray(icons[:n]).save(png)
+        y = int(H * (0.43 if kind == "stack" else 0.395)) - 62
+        base = g.overlay(base, g.still(png), "(W-w)/2", y, a, b, anim="none")
+    return base
+
+
 def render(args) -> None:
     work = Path(args.work)
     cut_path = str(work / "cut.mp4")
@@ -357,57 +530,24 @@ def render(args) -> None:
         panels.insert(1 if plan.get("hook") else 0,
                       {"type": "title", "text": tt["text"], "start": tt.get("start", 0), "end": tt.get("end", 2.5),
                        "y": tt.get("y", 320)})
-    split_ranges = [tuple(r) for r in plan.get("split", [])]
+    layouts = [{"type": "split", "start": a, "end": b} for a, b in plan.get("split", [])]
+    layouts += [dict(L) for L in plan.get("layouts", [])]
+    layouts.sort(key=lambda L: L["start"])
 
-    inputs = ["-i", cut_path]
-    fl = []
-    base = "[0:v]"
-    # --- split layout: beige background, panels on top, circular face cam below
-    if split_ranges:
-        face = plan.get("face", {})
-        fx, fy, fs = face.get("x", 0.5), face.get("y", 0.36), face.get("size", 0.42)  # crop box in fractions of W
-        side = int(W * fs) // 2 * 2
-        cx, cy = int(W * fx - side / 2), int(H * fy - side / 2)
-        diam = plan.get("circle_size", 380)
-        mask = tmp / "mask.png"
-        cards.circle_mask(diam).save(mask)
-        ring = tmp / "ring.png"
-        cards.circle_ring(diam, 6).save(ring)
-        inputs += ["-loop", "1", "-t", f"{total:.3f}", "-i", str(mask), "-loop", "1", "-t", f"{total:.3f}", "-i", str(ring)]
-        ccx, ccy = (W - diam) // 2, int(H * plan.get("circle_y", 0.69)) - diam // 2
-        en = "+".join(f"between(t,{a},{b})" for a, b in split_ranges)
-        fl += [f"[0:v]split[m0][f0]",
-               f"[f0]crop={side}:{side}:{max(0, cx)}:{max(0, cy)},scale={diam}:{diam},format=rgba[fc]",
-               f"[1:v]format=gray,scale={diam}:{diam}[mk]",
-               f"[fc][mk]alphamerge[circ]",
-               f"color=c={BEIGE}:s={W}x{H}:r={FPS}:d={total}[bg]",
-               f"[bg][circ]overlay={ccx}:{ccy}:shortest=1[bgc]",
-               f"[bgc][2:v]overlay={ccx}:{ccy}:shortest=1[splitv]",
-               f"[m0][splitv]overlay=0:0:enable='{en}'[b0]"]
-        base = "[b0]"
+    g = Graph(cut_path, total, tmp)
+    feeds = g.split_main(len(layouts))
+    base = feeds[0]
+    for i, L in enumerate(layouts):
+        comp = {"split": layout_split, "stack": layout_stack, "pip": layout_pip}[L["type"]](g, feeds[i + 1], L, plan)
+        base = g.overlay(base, comp, 0, 0, L["start"], L["end"], anim="none")
+    base = icons_and_tray(g, base, plan, layouts)
     # --- overlay cards
-    n_in = 1 + (2 if split_ranges else 0)
     for i, p in enumerate(panels):
         png = build_card(p, cut_path, tmp, i)
-        s, e = float(p["start"]), float(p["end"])
-        inputs += ["-loop", "1", "-t", f"{total:.3f}", "-i", str(png)]
-        k = n_in
-        n_in += 1
-        y0 = p.get("y", 140 if not p.get("stack") else 140 + p["stack"])
-        x = p.get("x", "(W-w)/2")
-        anim = p.get("anim", "pop")
-        lbl = f"p{i}"
-        chain = f"[{k}:v]format=rgba"
-        if anim != "none":
-            chain += f",fade=t=in:st={s:.3f}:d=0.12:alpha=1"
-        fl.append(chain + f"[{lbl}]")
-        if anim == "pop":
-            yexpr = f"{y0}-36*max(0\\,1-(t-{s:.3f})/0.16)"
-        else:
-            yexpr = str(y0)
-        nb = f"[o{i}]"
-        fl.append(f"{base}[{lbl}]overlay=x={x}:y='{yexpr}':enable='between(t,{s:.3f},{e:.3f})':eof_action=pass{nb}")
-        base = nb
+        y0 = p.get("y", 140)
+        base = g.overlay(base, g.still(png), p.get("x", "(W-w)/2"), y0, float(p["start"]), float(p["end"]),
+                         anim=p.get("anim", "pop"))
+    fl, inputs = g.fl, g.inputs
     # --- captions
     words_path = work / "words.json"
     if words_path.exists() and not plan.get("no_captions"):
@@ -415,7 +555,7 @@ def render(args) -> None:
         st = plan.get("captions", {})
         chunks = chunk_words(words, st.get("max_words", 3), st.get("max_chars", 18))
         ass = tmp / "captions.ass"
-        write_ass(ass, chunks, split_ranges, st)
+        write_ass(ass, chunks, layouts, st)
         fontsdir = str(Path(cards.font_path("Inter:bold")).parent)
         fl.append(f"{base}ass={ass}:fontsdir={fontsdir}[vc]")
         base = "[vc]"
